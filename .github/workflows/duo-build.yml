@@ -1,0 +1,49 @@
+name: DuoController build probe
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: DuoStream/DuoController
+          ref: 5f54fd0d5041a635100747aacb261b437c5704a2
+          persist-credentials: false
+      - name: Restore pinned SDK and WDK
+        shell: pwsh
+        run: |
+          nuget restore DuoController.sln -NonInteractive
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build unsigned Release x64
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $msbuild = & $vswhere -latest -version '[18.0,19.0)' -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
+          if (-not $msbuild) { throw 'Visual Studio 2026 C++ build tools missing.' }
+          & $msbuild 'DuoController\DuoController.vcxproj' /m /t:Build /p:Configuration=Release /p:Platform=x64 "/p:SolutionDir=$env:GITHUB_WORKSPACE\" /p:SignMode=Off /bl:duo-build.binlog
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $dlls = @(Get-ChildItem -LiteralPath x64\Release -Recurse -Filter DuoController.dll)
+          if ($dlls.Count -eq 0) { throw 'No driver DLL produced.' }
+      - name: Save build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: duo-build-log
+          path: duo-build.binlog
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Save unsigned output for inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: DuoController-UNSIGNED-inspection-only
+          path: |
+            x64/Release/**/*.dll
+            x64/Release/**/*.inf
+            x64/Release/**/*.cat
+            LICENSE
+          if-no-files-found: error
+          retention-days: 7
