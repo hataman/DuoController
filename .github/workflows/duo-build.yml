@@ -18,11 +18,12 @@ jobs:
           ref: 5f54fd0d5041a635100747aacb261b437c5704a2
           persist-credentials: false
 
-      - name: Use current 28000 WDK package
+      - name: Prepare WDK and disable CI analysis
         shell: pwsh
         run: |
           $old = '10.0.28000.1839'
           $new = '10.0.28000.2526'
+
           $files = @(
             'DuoController\packages.config',
             'DuoController\DuoController.vcxproj'
@@ -35,11 +36,24 @@ jobs:
               throw "Expected WDK version $old not found in $file"
             }
 
-            Set-Content `
-              -LiteralPath $file `
-              -Value ($text.Replace($old, $new)) `
-              -Encoding utf8
+            $text = $text.Replace($old, $new)
+            Set-Content -LiteralPath $file -Value $text -Encoding utf8
           }
+
+          $proj = 'DuoController\DuoController.vcxproj'
+          $text = Get-Content -LiteralPath $proj -Raw
+
+          $text = $text.Replace(
+            '<RunCodeAnalysis>true</RunCodeAnalysis>',
+            '<RunCodeAnalysis>false</RunCodeAnalysis>'
+          )
+
+          $text = $text.Replace(
+            '<EnablePREfast>true</EnablePREfast>',
+            '<EnablePREfast>false</EnablePREfast>'
+          )
+
+          Set-Content -LiteralPath $proj -Value $text -Encoding utf8
 
       - name: Restore SDK and WDK
         shell: pwsh
@@ -53,10 +67,7 @@ jobs:
         shell: pwsh
         run: |
           $stampTools = @(
-            Get-ChildItem `
-              -LiteralPath packages `
-              -Recurse `
-              -Filter stampinf.exe
+            Get-ChildItem -LiteralPath packages -Recurse -Filter stampinf.exe
           )
 
           $stampTool = $stampTools |
@@ -69,41 +80,28 @@ jobs:
           }
 
           Write-Host "Driver tools: $($stampTool.DirectoryName)"
-
           $stampTool.DirectoryName |
-            Out-File `
-              -FilePath $env:GITHUB_PATH `
-              -Encoding utf8 `
-              -Append
+            Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Build unsigned Release x64
         shell: pwsh
         run: |
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 
-          $msbuild = & $vswhere `
-            -latest `
-            -version '[18.0,19.0)' `
-            -products '*' `
-            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
-            -find 'MSBuild\**\Bin\MSBuild.exe' |
-            Select-Object -First 1
+          $msbuild = & $vswhere -latest -version '[18.0,19.0)' -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
 
           if (-not $msbuild) {
             throw 'Visual Studio 2026 C++ build tools missing.'
           }
 
-          & $msbuild 'DuoController\DuoController.vcxproj' /m /t:Build /p:Configuration=Release /p:Platform=x64 "/p:SolutionDir=$env:GITHUB_WORKSPACE\" /p:SignMode=Off /p:RunCodeAnalysis=false /p:EnablePREfast=false /bl:duo-build.binlog
+          & $msbuild 'DuoController\DuoController.vcxproj' /m /t:Build /p:Configuration=Release /p:Platform=x64 "/p:SolutionDir=$env:GITHUB_WORKSPACE\" /p:SignMode=Off /bl:duo-build.binlog
 
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
 
           $dlls = @(
-            Get-ChildItem `
-              -LiteralPath x64\Release `
-              -Recurse `
-              -Filter DuoController.dll
+            Get-ChildItem -LiteralPath x64\Release -Recurse -Filter DuoController.dll
           )
 
           if ($dlls.Count -eq 0) {
