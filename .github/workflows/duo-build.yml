@@ -1,44 +1,123 @@
 name: DuoController build probe
+
 on:
   workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
   build:
     runs-on: windows-2025-vs2026
     timeout-minutes: 25
+
     steps:
       - uses: actions/checkout@v4
         with:
           repository: DuoStream/DuoController
           ref: 5f54fd0d5041a635100747aacb261b437c5704a2
           persist-credentials: false
-      - name: Restore pinned SDK and WDK
+
+      - name: Use current 28000 WDK package
+        shell: pwsh
+        run: |
+          $old = '10.0.28000.1839'
+          $new = '10.0.28000.2526'
+          $files = @(
+            'DuoController\packages.config',
+            'DuoController\DuoController.vcxproj'
+          )
+
+          foreach ($file in $files) {
+            $text = Get-Content -LiteralPath $file -Raw
+
+            if (-not $text.Contains($old)) {
+              throw "Expected WDK version $old not found in $file"
+            }
+
+            Set-Content `
+              -LiteralPath $file `
+              -Value ($text.Replace($old, $new)) `
+              -Encoding utf8
+          }
+
+      - name: Restore SDK and WDK
         shell: pwsh
         run: |
           nuget restore DuoController.sln -NonInteractive
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
       - name: Locate driver build tools
         shell: pwsh
         run: |
-          $stampTools = @(Get-ChildItem -LiteralPath packages -Recurse -Filter stampinf.exe)
-          $stampTool = $stampTools | Where-Object { $_.FullName -match '\\x64\\' } | Select-Object -First 1
+          $stampTools = @(
+            Get-ChildItem `
+              -LiteralPath packages `
+              -Recurse `
+              -Filter stampinf.exe
+          )
+
+          $stampTool = $stampTools |
+            Where-Object { $_.FullName -match '\\x64\\' } |
+            Select-Object -First 1
+
           if (-not $stampTool) {
             $stampTools | Select-Object -ExpandProperty FullName
             throw 'No x64 stampinf.exe found in restored packages.'
           }
+
           Write-Host "Driver tools: $($stampTool.DirectoryName)"
-          $stampTool.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+          $stampTool.DirectoryName |
+            Out-File `
+              -FilePath $env:GITHUB_PATH `
+              -Encoding utf8 `
+              -Append
+
       - name: Build unsigned Release x64
         shell: pwsh
         run: |
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $msbuild = & $vswhere -latest -version '[18.0,19.0)' -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
-          if (-not $msbuild) { throw 'Visual Studio 2026 C++ build tools missing.' }
-          & $msbuild 'DuoController\DuoController.vcxproj' /m /t:Build /p:Configuration=Release /p:Platform=x64 "/p:SolutionDir=$env:GITHUB_WORKSPACE\" /p:SignMode=Off /bl:duo-build.binlog
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $dlls = @(Get-ChildItem -LiteralPath x64\Release -Recurse -Filter DuoController.dll)
-          if ($dlls.Count -eq 0) { throw 'No driver DLL produced.' }
+
+          $msbuild = & $vswhere `
+            -latest `
+            -version '[18.0,19.0)' `
+            -products '*' `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -find 'MSBuild\**\Bin\MSBuild.exe' |
+            Select-Object -First 1
+
+          if (-not $msbuild) {
+            throw 'Visual Studio 2026 C++ build tools missing.'
+          }
+
+          & $msbuild `
+            'DuoController\DuoController.vcxproj' `
+            /m `
+            /t:Build `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            "/p:SolutionDir=$env:GITHUB_WORKSPACE\" `
+            /p:SignMode=Off `
+            /bl:duo-build.binlog
+
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+          $dlls = @(
+            Get-ChildItem `
+              -LiteralPath x64\Release `
+              -Recurse `
+              -Filter DuoController.dll
+          )
+
+          if ($dlls.Count -eq 0) {
+            throw 'No driver DLL produced.'
+          }
+
       - name: Save build log
         if: always()
         uses: actions/upload-artifact@v4
@@ -47,6 +126,7 @@ jobs:
           path: duo-build.binlog
           if-no-files-found: warn
           retention-days: 7
+
       - name: Save unsigned output for inspection
         uses: actions/upload-artifact@v4
         with:
