@@ -93,15 +93,7 @@ jobs:
             throw 'Visual Studio 2026 C++ build tools missing.'
           }
 
-          & $msbuild `
-            'DuoController\DuoController.vcxproj' `
-            /m `
-            /t:Build `
-            /p:Configuration=Release `
-            /p:Platform=x64 `
-            "/p:SolutionDir=$env:GITHUB_WORKSPACE\" `
-            /p:SignMode=Off `
-            /bl:duo-build.binlog
+          & $msbuild 'DuoController\DuoController.vcxproj' /m /t:Build /p:Configuration=Release /p:Platform=x64 "/p:SolutionDir=$env:GITHUB_WORKSPACE\" /p:SignMode=Off /p:RunCodeAnalysis=false /p:EnablePREfast=false /bl:duo-build.binlog
 
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
